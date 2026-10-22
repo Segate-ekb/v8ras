@@ -5,12 +5,10 @@ name: E2E (живой RAS)
 # (загрузка платформы с releases.1c.ru и лицензии), поэтому идёт только в основном
 # репозитории. Лицензия сервера ставится из секрета ONEC_SERVER_LICENCE.
 
+# Запуск вручную: требует секретов ONEC_USERNAME/ONEC_PASSWORD (загрузка платформы
+# с releases.1c.ru) помимо лицензий. Включите после их добавления.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-  pull_request:
 
 permissions:
   contents: read
