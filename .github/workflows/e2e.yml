@@ -1,0 +1,118 @@
+name: E2E (живой RAS)
+
+# Поднимает сервер 1С (ragent) и сервер администрирования (ras), затем гоняет
+# сквозной тест против живого RAS по адресу V8RAS_E2E_RAS. Требует секретов стенда
+# (загрузка платформы с releases.1c.ru и лицензии), поэтому идёт только в основном
+# репозитории. Лицензия сервера ставится из секрета ONEC_SERVER_LICENCE.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E против живого RAS
+    if: ${{ github.repository_owner == 'Segate-ekb' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        oscript_version: ['2.2.1']
+        v8_version: ['8.3.25.1445']
+
+    env:
+      V8RAS_E2E_RAS: 'localhost:1545'
+
+    steps:
+      - name: Актуализация
+        uses: actions/checkout@v4
+
+      - name: Установка свойств git
+        shell: bash
+        run: |
+          git config --global user.name  "GitHub Actions"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Установка OneScript
+        uses: otymko/setup-onescript@v1.4
+        with:
+          version: ${{ matrix.oscript_version }}
+
+      - name: Установка зависимостей OneScript
+        run: |
+          opm install opm
+          opm install -l --dev
+
+      - name: Подготовка окружения
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y locales libwebkit2gtk-4.0-37 libglu1-mesa
+          sudo localedef -i ru_RU -c -f UTF-8 -A /usr/share/locale/locale.alias ru_RU.UTF-8
+
+      - name: Установка 1С:Предприятие (сервер)
+        uses: 1CDevFlow/onec-setup-action@main
+        with:
+          type: onec
+          onec_version: ${{ matrix.v8_version }}
+          cache: true
+        env:
+          ONEC_USERNAME: ${{ secrets.ONEC_USERNAME }}
+          ONEC_PASSWORD: ${{ secrets.ONEC_PASSWORD }}
+
+      - name: Установка лицензии 1С
+        run: |
+          sudo mkdir -p /var/1C/licenses
+          echo "${{ secrets.ONEC_LICENCE }}"        | sudo tee /var/1C/licenses/licence.lic        > /dev/null
+          echo "${{ secrets.ONEC_SERVER_LICENCE }}" | sudo tee /var/1C/licenses/server-licence.lic > /dev/null
+          sudo chmod 777 -R /var/1C/licenses
+
+      - name: Создание conf.cfg
+        run: |
+          sudo mkdir -p /opt/1cv8/conf/
+          sudo tee /opt/1cv8/conf/conf.cfg > /dev/null <<EOF
+          DisableUnsafeActionProtection=.*
+          SystemLanguage=System
+          EOF
+          sudo chmod 777 -R /opt/1cv8/conf/
+
+      - name: Запуск ragent (сервер 1С)
+        run: |
+          set -ex
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          mkdir -p "$HOME/.1cv8-srvinfo"
+          nohup "$PLATFORM_DIR/ragent" \
+            -port 1540 -regport 1541 -range 1560:1591 \
+            -d "$HOME/.1cv8-srvinfo" \
+            > "$HOME/ragent.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/1540) 2>/dev/null; then echo "ragent поднят"; break; fi
+            sleep 1
+          done
+
+      - name: Запуск ras (сервер администрирования)
+        run: |
+          set -ex
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          nohup "$PLATFORM_DIR/ras" cluster --port=1545 localhost:1540 \
+            > "$HOME/ras.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/1545) 2>/dev/null; then echo "ras поднят"; break; fi
+            sleep 1
+          done
+
+      - name: Сквозной тест против живого RAS
+        run: oneunit execute -f tests/e2e/ТестЖивойRAS.os
+
+      - name: Логи серверов при ошибке
+        if: failure()
+        run: |
+          echo "=== ragent.log ==="; cat "$HOME/ragent.log" || true
+          echo "=== ras.log ===";    cat "$HOME/ras.log"    || true

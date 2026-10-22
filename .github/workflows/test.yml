@@ -1,0 +1,21 @@
+name: Тестирование
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Юнит-тесты не требуют сервера 1С: кодек, кадрирование по TCP-петле,
+    # рукопожатие и разбор сущностей на сокете-сценарии. Кроссплатформенно.
+    uses: autumn-library/workflows/.github/workflows/test.yml@v1
+    with:
+      oscript_version: 2.2.1
+      test_engine: oneunit
+      os_versions: '["ubuntu-latest", "windows-latest", "macos-latest"]'
+      test_dir_paths: tests
+      test_recursive: false
