@@ -47,6 +47,16 @@ jobs:
         with:
           version: ${{ matrix.oscript_version }}
 
+      - name: Кэш пакетов OneScript
+        # Пакеты (oneunit, asserts, dev-зависимости) кэшируются, чтобы не ходить
+        # каждый раз в медленный хаб opm. Ключ сбрасывается при смене packagedef.
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/ovm
+          key: ovm-${{ runner.os }}-${{ matrix.oscript_version }}-${{ hashFiles('packagedef') }}
+          restore-keys: |
+            ovm-${{ runner.os }}-${{ matrix.oscript_version }}-
+
       - name: Установка зависимостей OneScript
         run: |
           opm install opm
@@ -64,7 +74,8 @@ jobs:
         with:
           type: onec
           onec_version: ${{ matrix.v8_version }}
-          cache: true
+          cache: true        # кэш установки платформы
+          cache_distr: true  # кэш скачанного дистрибутива — не качать каждый раз
         env:
           ONEC_USERNAME: ${{ secrets.ONEC_USERNAME }}
           ONEC_PASSWORD: ${{ secrets.ONEC_PASSWORD }}
