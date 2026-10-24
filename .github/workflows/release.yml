@@ -1,0 +1,32 @@
+name: Публикация релиза
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+# Токена хаба в секретах нет: хаб проверяет OIDC id-token конвейера
+# и сверяет репозиторий, файл workflow и тег с записью доверия на пакет.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    uses: autumn-library/workflows/.github/workflows/test.yml@v1
+    with:
+      oscript_version: 2.2.1
+      test_engine: oneunit
+      test_dir_paths: tests
+      test_recursive: false
+
+  release:
+    needs: test
+    uses: autumn-library/workflows/.github/workflows/release.yml@v1
+    with:
+      oscript_version: 2.2.1
+      package_mask: "v8ras-*.ospx"
+      trusted_publishing: true
+      hub_url: https://hub.oscript.io
+      pool: default
