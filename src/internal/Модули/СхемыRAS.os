@@ -167,7 +167,8 @@
 			.Флаг("ВнешнееУправлениеСеансамиОбязательно") // external_session_manager_required
 			.Текст("ПрофильБезопасности")                 // security_profile_name
 			.Текст("ПрофильБезопасногоРежима")            // safe_mode_security_profile_name
-			.Флаг("РезервироватьРабочиеПроцессы", 9);     // reserve_working_processes
+			.Флаг("РезервироватьРабочиеПроцессы", 9)      // reserve_working_processes
+			.Флаг("ЗапретЛокальногоРаспознаванияРечи", 13); // disable_local_speech_to_text
 	КонецЕсли;
 	Возврат _База;
 КонецФункции
