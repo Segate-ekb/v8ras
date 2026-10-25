@@ -125,12 +125,7 @@ jobs:
           done
 
       - name: Сквозной тест против живого RAS
-        # rac той же платформы нужен тесту настроек базы: он выставляет значения, библиотека читает
-        run: |
-          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
-                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
-          export V8RAS_E2E_RAC="$PLATFORM_DIR/rac"
-          oneunit execute -f tests/e2e/ТестЖивойRAS.os
+        run: oneunit execute -f tests/e2e/ТестЖивойRAS.os
 
       - name: Логи серверов при ошибке
         if: failure()
