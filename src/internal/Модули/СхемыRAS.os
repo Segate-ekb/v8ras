@@ -24,7 +24,8 @@
 			.Целое("РежимРаспределенияНагрузки")      // load_balancing_mode
 			.Целое("ДопустимоеОтклонениеОшибок")      // errors_count_threshold
 			.Флаг("ЗавершатьПроблемныеПроцессы")      // kill_problem_processes
-			.Флаг("ДампПриПревышенииПамяти", 8);      // kill_by_memory_with_dump
+			.Флаг("ДампПриПревышенииПамяти", 8)       // kill_by_memory_with_dump
+			.Целое("НеизвестноеЦелое14", 14);         // с версии 14; rac не показывает, на живых серверах 1
 	КонецЕсли;
 	Возврат _Кластер;
 КонецФункции
@@ -168,7 +169,10 @@
 			.Текст("ПрофильБезопасности")                 // security_profile_name
 			.Текст("ПрофильБезопасногоРежима")            // safe_mode_security_profile_name
 			.Флаг("РезервироватьРабочиеПроцессы", 9)      // reserve_working_processes
-			.Флаг("ЗапретЛокальногоРаспознаванияРечи", 13); // disable_local_speech_to_text
+			.Флаг("ЗапретЛокальногоРаспознаванияРечи", 13)  // disable_local_speech_to_text
+			.Целое("ЗадержкаВыгрузкиКонфигурацииБезПользователей", 14)   // configuration_unload_delay_by_working_process_without_active_users
+			.Целое("МинПериодРегламентныхЗаданийБезПользователей", 14)   // minimum_scheduled_jobs_start_period_without_active_users
+			.Целое("МаксСдвигРегламентныхЗаданийБезПользователей", 14);  // maximum_scheduled_jobs_start_shift_without_active_users
 	КонецЕсли;
 	Возврат _База;
 КонецФункции
