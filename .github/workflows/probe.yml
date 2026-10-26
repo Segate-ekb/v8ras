@@ -1,0 +1,143 @@
+name: Probe (версии RAS)
+
+# Поднимает сервер 1С (ragent) и сервер администрирования (ras), затем гоняет
+# сквозной тест против живого RAS по адресу V8RAS_E2E_RAS. Требует секретов стенда
+# (загрузка платформы с releases.1c.ru и лицензии), поэтому идёт только в основном
+# репозитории. Лицензия сервера ставится из секрета ONEC_SERVER_LICENCE.
+
+# Запуск вручную: требует секретов ONEC_USERNAME/ONEC_PASSWORD (загрузка платформы
+# с releases.1c.ru) помимо лицензий. Включите после их добавления.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Снимки протокола
+    if: ${{ github.repository_owner == 'Segate-ekb' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        oscript_version: ['2.2.1']
+        # Номера сборок доступны этому аккаунту на releases.1c.ru. Линия 8.5.4
+        # (тестовый релиз) аккаунту недоступна — вместо неё последняя 8.5.1.
+        v8_version:
+          - '8.5.1.1529'
+          - '8.3.27.2342'
+
+    env:
+      V8RAS_E2E_RAS: 'localhost:1545'
+
+    steps:
+      - name: Актуализация
+        uses: actions/checkout@v4
+
+      - name: Установка свойств git
+        shell: bash
+        run: |
+          git config --global user.name  "GitHub Actions"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Установка OneScript
+        uses: otymko/setup-onescript@v1.4
+        with:
+          version: ${{ matrix.oscript_version }}
+
+      - name: Кэш пакетов OneScript
+        # Пакеты (oneunit, asserts, dev-зависимости) кэшируются, чтобы не ходить
+        # каждый раз в медленный хаб opm. Ключ сбрасывается при смене packagedef.
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/ovm
+          key: ovm-${{ runner.os }}-${{ matrix.oscript_version }}-${{ hashFiles('packagedef') }}
+          restore-keys: |
+            ovm-${{ runner.os }}-${{ matrix.oscript_version }}-
+
+      - name: Установка зависимостей OneScript
+        run: |
+          opm install opm
+          opm install -l --dev
+          opm install oneunit asserts
+
+      - name: Подготовка окружения
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y locales libwebkit2gtk-4.0-37 libglu1-mesa
+          sudo localedef -i ru_RU -c -f UTF-8 -A /usr/share/locale/locale.alias ru_RU.UTF-8
+
+      - name: Установка 1С:Предприятие (сервер)
+        uses: 1CDevFlow/onec-setup-action@main
+        with:
+          type: onec
+          onec_version: ${{ matrix.v8_version }}
+          cache: true        # кэш установки платформы
+          cache_distr: true  # кэш скачанного дистрибутива — не качать каждый раз
+        env:
+          ONEC_USERNAME: ${{ secrets.ONEC_USERNAME }}
+          ONEC_PASSWORD: ${{ secrets.ONEC_PASSWORD }}
+
+      - name: Установка лицензии 1С
+        run: |
+          sudo mkdir -p /var/1C/licenses
+          echo "${{ secrets.ONEC_LICENCE }}"        | sudo tee /var/1C/licenses/licence.lic        > /dev/null
+          echo "${{ secrets.ONEC_SERVER_LICENCE }}" | sudo tee /var/1C/licenses/server-licence.lic > /dev/null
+          sudo chmod 777 -R /var/1C/licenses
+
+      - name: Создание conf.cfg
+        run: |
+          sudo mkdir -p /opt/1cv8/conf/
+          sudo tee /opt/1cv8/conf/conf.cfg > /dev/null <<EOF
+          DisableUnsafeActionProtection=.*
+          SystemLanguage=System
+          EOF
+          sudo chmod 777 -R /opt/1cv8/conf/
+
+      - name: Запуск ragent (сервер 1С)
+        run: |
+          set -ex
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          mkdir -p "$HOME/.1cv8-srvinfo"
+          nohup "$PLATFORM_DIR/ragent" \
+            -port 1540 -regport 1541 -range 1560:1591 \
+            -d "$HOME/.1cv8-srvinfo" \
+            > "$HOME/ragent.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/1540) 2>/dev/null; then echo "ragent поднят"; break; fi
+            sleep 1
+          done
+
+      - name: Запуск ras (сервер администрирования)
+        run: |
+          set -ex
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          nohup "$PLATFORM_DIR/ras" cluster --port=1545 localhost:1540 \
+            > "$HOME/ras.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/1545) 2>/dev/null; then echo "ras поднят"; break; fi
+            sleep 1
+          done
+
+      - name: Проба версий сервиса 10–24
+        run: oscript tools/probe/probe-port.os 1545 "10.0,16.0,17.0,18.0,19.0,20.0,21.0,22.0,23.0,24.0" | tee probe.log
+
+      - name: Снимки ответов на версиях 16–22
+        run: |
+          mkdir -p dump
+          for v in 16.0 17.0 18.0 19.0 20.0 21.0 22.0; do
+            oscript tools/probe/dump.os "$PWD/dump" 1545 "$v" >> dump/dump.log 2>&1 || true
+          done
+          tail -40 dump/dump.log
+
+      - name: Артефакты
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ras-dump-${{ matrix.v8_version }}
+          path: |
+            probe.log
+            dump/
