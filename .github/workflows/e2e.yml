@@ -1,7 +1,7 @@
 name: E2E (живой RAS)
 
 # Поднимает сервер 1С (ragent) и сервер администрирования (ras), затем гоняет
-# сквозной тест против живого RAS по адресу V8RAS_E2E_RAS. Требует секретов стенда
+# сквозные тесты tests/e2e против живого RAS по адресу V8RAS_E2E_RAS. Требует секретов стенда
 # (загрузка платформы с releases.1c.ru и лицензии), поэтому идёт только в основном
 # репозитории. Лицензия сервера ставится из секрета ONEC_SERVER_LICENCE.
 
@@ -22,15 +22,18 @@ jobs:
       fail-fast: false
       matrix:
         oscript_version: ['2.2.1']
+        # Четыре платформы с разными версиями сервиса администрирования: 11, 13, 16 и 22.
         # Номера сборок доступны этому аккаунту на releases.1c.ru. Линия 8.5.4
         # (тестовый релиз) аккаунту недоступна — вместо неё последняя 8.5.1.
         v8_version:
-          - '8.3.25.1445'
-          - '8.3.27.2130'
+          - '8.3.20.1549'
+          - '8.3.24.1548'
+          - '8.3.27.1859'
           - '8.5.1.1529'
 
     env:
       V8RAS_E2E_RAS: 'localhost:1545'
+      V8RAS_E2E_V8_VERSION: ${{ matrix.v8_version }}
 
     steps:
       - name: Актуализация
@@ -123,8 +126,54 @@ jobs:
             sleep 1
           done
 
-      - name: Сквозной тест против живого RAS
-        run: oneunit execute -f tests/e2e/ТестЖивойRAS.os
+      - name: Сквозные тесты против живого RAS
+        # Тег набора или теста в tests/e2e — минимальная платформа, с которой доступна проверяемая
+        # возможность. На стенд уходят только теги не новее установленной платформы.
+        run: |
+          set -e
+          TAGS=""
+          for MIN in $(grep -ho '&Тег("[0-9.]*")' tests/e2e/*.os | grep -o '[0-9.]*' | sort -uV); do
+            if [ "$(printf '%s\n' "$MIN" "${{ matrix.v8_version }}" | sort -V | head -1)" = "$MIN" ]; then
+              TAGS="${TAGS:+$TAGS,}$MIN"
+            fi
+          done
+          echo "платформа ${{ matrix.v8_version }}, теги: $TAGS"
+          oneunit execute -d tests/e2e -t "$TAGS"
+
+      - name: Сверка созданных объектов через rac
+        # Тест оставляет на стенде счётчик, ограничение и требование назначения;
+        # rac платформы показывает, как их понял сервер — так ловится порядок полей в запросах.
+        run: |
+          set -e
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          RAC="$PLATFORM_DIR/rac"
+          CLUSTER=$("$RAC" cluster list localhost:1545 | awk '/^cluster/ {print $3; exit}')
+          SERVER=$("$RAC" server list --cluster="$CLUSTER" localhost:1545 | awk '/^server/ {print $3; exit}')
+          echo "кластер $CLUSTER, сервер $SERVER"
+
+          # Сначала весь вывод rac — чтобы при расхождении было видно, как сервер понял каждый объект.
+          echo "=== rac counter info v8ras-e2e ==="
+          "$RAC" counter info --cluster="$CLUSTER" --counter=v8ras-e2e localhost:1545 | tee counter.txt
+          echo "=== rac limit info v8ras-e2e-limit ==="
+          "$RAC" limit info --cluster="$CLUSTER" --limit=v8ras-e2e-limit localhost:1545 | tee limit.txt
+          echo "=== rac rule list ==="
+          "$RAC" rule list --cluster="$CLUSTER" --server="$SERVER" localhost:1545 | tee rules.txt
+
+          grep -Eq '^memory +: analyze' counter.txt
+          grep -Eq '^call +: analyze' counter.txt
+          test "$(grep -c ': analyze' counter.txt)" -eq 2
+          grep -Eq '^collection-time +: 600' counter.txt
+
+          grep -Eq '^counter +: v8ras-e2e$' limit.txt
+          grep -Eq '^action +: interrupt-current-call' limit.txt
+          grep -Eq '^duration +: 1000$' limit.txt
+          grep -Eq '^memory +: 2000$' limit.txt
+          grep -Eq '^call +: 3$' limit.txt
+
+          grep -Eq ': v8ras-e2e-base$' rules.txt
+          grep -Eq ': always$' rules.txt
+          grep -Eq '^priority +: 5$' rules.txt
 
       - name: Логи серверов при ошибке
         if: failure()
