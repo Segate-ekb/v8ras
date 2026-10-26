@@ -141,23 +141,25 @@ jobs:
           SERVER=$("$RAC" server list --cluster="$CLUSTER" localhost:1545 | awk '/^server/ {print $3; exit}')
           echo "кластер $CLUSTER, сервер $SERVER"
 
+          # Сначала весь вывод rac — чтобы при расхождении было видно, как сервер понял каждый объект.
           echo "=== rac counter info v8ras-e2e ==="
           "$RAC" counter info --cluster="$CLUSTER" --counter=v8ras-e2e localhost:1545 | tee counter.txt
+          echo "=== rac limit info v8ras-e2e-limit ==="
+          "$RAC" limit info --cluster="$CLUSTER" --limit=v8ras-e2e-limit localhost:1545 | tee limit.txt
+          echo "=== rac rule list ==="
+          "$RAC" rule list --cluster="$CLUSTER" --server="$SERVER" localhost:1545 | tee rules.txt
+
           grep -Eq '^memory +: analyze' counter.txt
           grep -Eq '^call +: analyze' counter.txt
           test "$(grep -c ': analyze' counter.txt)" -eq 2
           grep -Eq '^collection-time +: 600' counter.txt
 
-          echo "=== rac limit info v8ras-e2e-limit ==="
-          "$RAC" limit info --cluster="$CLUSTER" --limit=v8ras-e2e-limit localhost:1545 | tee limit.txt
           grep -Eq '^counter +: v8ras-e2e$' limit.txt
           grep -Eq '^action +: interrupt-current-call' limit.txt
           grep -Eq '^duration +: 1000$' limit.txt
           grep -Eq '^memory +: 2000$' limit.txt
           grep -Eq '^call +: 3$' limit.txt
 
-          echo "=== rac rule list ==="
-          "$RAC" rule list --cluster="$CLUSTER" --server="$SERVER" localhost:1545 | tee rules.txt
           grep -Eq ': v8ras-e2e-base$' rules.txt
           grep -Eq ': always$' rules.txt
           grep -Eq '^priority +: 5$' rules.txt
