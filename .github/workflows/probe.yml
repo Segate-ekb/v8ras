@@ -28,7 +28,6 @@ jobs:
         # (тестовый релиз) аккаунту недоступна — вместо неё последняя 8.5.1.
         v8_version:
           - '8.5.1.1529'
-          - '8.3.27.2342'
 
     env:
       V8RAS_E2E_RAS: 'localhost:1545'
@@ -135,6 +134,23 @@ jobs:
           done
           tail -40 dump/dump.log
 
+      - name: Справка и состояние rac
+        run: |
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          RAC="$PLATFORM_DIR/rac"
+          mkdir -p rac-help
+          for m in cluster server process service infobase rule counter limit session connection agent manager profile lock service-setting binary-data-storage; do
+            "$RAC" help $m > rac-help/$m.txt 2>&1 || true
+          done
+          "$RAC" help > rac-help/modes.txt 2>&1 || true
+          CL=$("$RAC" cluster list | awk '/^cluster/{print $3; exit}')
+          "$RAC" cluster info --cluster=$CL > rac-help/cluster-info.txt 2>&1 || true
+          SRV=$("$RAC" server list --cluster=$CL | awk '/^server/{print $3; exit}')
+          "$RAC" server info --cluster=$CL --server=$SRV > rac-help/server-info.txt 2>&1 || true
+          "$RAC" service list --cluster=$CL > rac-help/service-list.txt 2>&1 || true
+          "$RAC" process list --cluster=$CL > rac-help/process-list.txt 2>&1 || true
+
       - name: Артефакты
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,3 +159,4 @@ jobs:
           path: |
             probe.log
             dump/
+            rac-help/
