@@ -9,6 +9,8 @@ name: Probe (версии RAS)
 # с releases.1c.ru) помимо лицензий. Включите после их добавления.
 on:
   workflow_dispatch:
+  push:
+    branches: ['chore/ras-probe']
 
 permissions:
   contents: read
