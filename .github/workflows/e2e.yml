@@ -129,6 +129,39 @@ jobs:
       - name: Сквозной тест против живого RAS
         run: oneunit execute -f tests/e2e/ТестЖивойRAS.os
 
+      - name: Сверка созданных объектов через rac
+        # Тест оставляет на стенде счётчик, ограничение и требование назначения;
+        # rac платформы показывает, как их понял сервер — так ловится порядок полей в запросах.
+        run: |
+          set -e
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          RAC="$PLATFORM_DIR/rac"
+          CLUSTER=$("$RAC" cluster list localhost:1545 | awk '/^cluster/ {print $3; exit}')
+          SERVER=$("$RAC" server list --cluster="$CLUSTER" localhost:1545 | awk '/^server/ {print $3; exit}')
+          echo "кластер $CLUSTER, сервер $SERVER"
+
+          echo "=== rac counter info v8ras-e2e ==="
+          "$RAC" counter info --cluster="$CLUSTER" --counter=v8ras-e2e localhost:1545 | tee counter.txt
+          grep -Eq '^memory +: analyze' counter.txt
+          grep -Eq '^call +: analyze' counter.txt
+          test "$(grep -c ': analyze' counter.txt)" -eq 2
+          grep -Eq '^collection-time +: 600' counter.txt
+
+          echo "=== rac limit info v8ras-e2e-limit ==="
+          "$RAC" limit info --cluster="$CLUSTER" --limit=v8ras-e2e-limit localhost:1545 | tee limit.txt
+          grep -Eq '^counter +: v8ras-e2e$' limit.txt
+          grep -Eq '^action +: interrupt-current-call' limit.txt
+          grep -Eq '^duration +: 1000$' limit.txt
+          grep -Eq '^memory +: 2000$' limit.txt
+          grep -Eq '^call +: 3$' limit.txt
+
+          echo "=== rac rule list ==="
+          "$RAC" rule list --cluster="$CLUSTER" --server="$SERVER" localhost:1545 | tee rules.txt
+          grep -Eq ': v8ras-e2e-base$' rules.txt
+          grep -Eq ': always$' rules.txt
+          grep -Eq '^priority +: 5$' rules.txt
+
       - name: Логи серверов при ошибке
         if: failure()
         run: |
