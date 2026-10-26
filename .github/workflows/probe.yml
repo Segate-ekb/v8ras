@@ -96,6 +96,21 @@ jobs:
           EOF
           sudo chmod 777 -R /opt/1cv8/conf/
 
+      - name: PostgreSQL для 1С (Postgres Pro 1C 16)
+        run: |
+          set -x
+          curl -fsSL https://repo.postgrespro.ru/1c-16/keys/pgpro-repo-add.sh -o /tmp/pgpro-repo-add.sh
+          sudo sh /tmp/pgpro-repo-add.sh
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgrespro-1c-16
+          sudo /opt/pgpro/1c-16/bin/pg-setup initdb --locale=ru_RU.UTF-8 || true
+          sudo /opt/pgpro/1c-16/bin/pg-setup service start || true
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/5432) 2>/dev/null; then echo "pg поднят"; break; fi
+            sleep 1
+          done
+          sudo -u postgres /opt/pgpro/1c-16/bin/psql -c "ALTER USER postgres PASSWORD 'pgpass'"
+          sudo -u postgres /opt/pgpro/1c-16/bin/psql -c "select version()"
+
       - name: Запуск ragent (сервер 1С)
         run: |
           set -ex
@@ -123,14 +138,46 @@ jobs:
             sleep 1
           done
 
+      - name: База, правило, счётчик и лимит через rac
+        run: |
+          set -x
+          PLATFORM_DIR=$(ls -d /opt/1cv8/x86_64/${{ matrix.v8_version }} 2>/dev/null \
+                       || ls -d /opt/1cv8/i386/${{ matrix.v8_version }})
+          RAC="$PLATFORM_DIR/rac"
+          mkdir -p rac-state
+          CL=$("$RAC" cluster list | awk '/^cluster/{print $3; exit}')
+          SRV=$("$RAC" server list --cluster=$CL | awk '/^server/{print $3; exit}')
+          "$RAC" infobase create --cluster=$CL --create-database --name=ib1 --dbms=PostgreSQL \
+            --db-server=localhost --db-name=ib1 --locale=ru_RU --db-user=postgres --db-pwd=pgpass \
+            --descr="Test base" --license-distribution=allow --date-offset=2000 --security-level=1 \
+            | tee rac-state/infobase-create.txt || true
+          IB=$("$RAC" infobase summary list --cluster=$CL | awk '/^infobase/{print $3; exit}')
+          "$RAC" infobase update --cluster=$CL --infobase=$IB \
+            --disable-local-speech-to-text=yes \
+            --configuration-unload-delay-by-working-process-without-active-users=111 \
+            --minimum-scheduled-jobs-start-period-without-active-users=222 \
+            --maximum-scheduled-jobs-start-shift-without-active-users=333 \
+            --reserve-working-processes=yes --scheduled-jobs-deny=on \
+            --denied-message="stop" --denied-parameter="param" --permission-code="code" \
+            --external-session-manager-connection-string="http://esm" --security-profile-name="" \
+            | tee rac-state/infobase-update.txt || true
+          "$RAC" infobase info --cluster=$CL --infobase=$IB > rac-state/infobase-info.txt 2>&1 || true
+          "$RAC" rule insert --cluster=$CL --server=$SRV --position=0 --rule-type=always --infobase-name=ib1 --priority=5 | tee rac-state/rule-insert.txt || true
+          "$RAC" rule list --cluster=$CL --server=$SRV > rac-state/rule-list.txt 2>&1 || true
+          "$RAC" counter update --cluster=$CL --name=cnt1 --collection-time=600 --group=users --filter-type=all --duration=analyze --memory=analyze --descr="c1" | tee rac-state/counter-update.txt || true
+          "$RAC" counter list --cluster=$CL > rac-state/counter-list.txt 2>&1 || true
+          "$RAC" limit update --cluster=$CL --name=lim1 --counter=cnt1 --duration=1000 --memory=2000 --action=none --error-message="too much" --descr="l1" | tee rac-state/limit-update.txt || true
+          "$RAC" limit list --cluster=$CL > rac-state/limit-list.txt 2>&1 || true
+          "$RAC" service-setting list --cluster=$CL --server=$SRV > rac-state/service-setting-list.txt 2>&1 || true
+
       - name: Проба версий сервиса 10–24
         run: oscript tools/probe/probe-port.os 1545 "10.0,16.0,17.0,18.0,19.0,20.0,21.0,22.0,23.0,24.0" | tee probe.log
 
       - name: Снимки ответов на версиях 16–22
         run: |
           mkdir -p dump
-          for v in 16.0 17.0 18.0 19.0 20.0 21.0 22.0; do
-            oscript tools/probe/dump.os "$PWD/dump" 1545 "$v" >> dump/dump.log 2>&1 || true
+          for v in 12.0 13.0 14.0 15.0 16.0 17.0 18.0 19.0 20.0 21.0 22.0; do
+            oscript tools/probe/dump.os "$PWD/dump" 1545 "$v" "" >> dump/dump.log 2>&1 || true
           done
           tail -40 dump/dump.log
 
@@ -160,3 +207,4 @@ jobs:
             probe.log
             dump/
             rac-help/
+            rac-state/
