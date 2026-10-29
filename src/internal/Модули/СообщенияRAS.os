@@ -106,9 +106,8 @@
 	Возврат 29;
 КонецФункции
 
-// Нет в v8platform/protos: снят прокси с rac 8.3.27 (process turn-off).
 Функция TURN_OFF_WORKING_PROCESS() Экспорт
-	Возврат 165;
+	Возврат 165; // нет в v8platform/protos: снят прокси с rac 8.3.27 (process turn-off)
 КонецФункции
 
 #КонецОбласти
